@@ -1,80 +1,59 @@
 # YOLOv9
 
 # parameters
-nc: 80  # number of classes
-depth_multiple: 1.0  # model depth multiple
-width_multiple: 1.0  # layer channel multiple
+nc: 80   # 类别数
+depth_multiple: 1.0  # 模型深度缩放因子（控制模块重复次数）
+width_multiple: 1.0  # 通道宽度缩放因子（控制通道数）
 #activation: nn.LeakyReLU(0.1)
 #activation: nn.ReLU()
 
 # anchors
-anchors: 3
+anchors: 3  # 每个检测层的Anchor数量
 
 # gelan backbone
 backbone:
   [
-   # conv down
-   [-1, 1, Conv, [32, 3, 2]],  # 0-P1/2
+    # 初始下采样
+    [ -1, 1, Conv, [ 32, 3, 2 ] ],  # 0: 3x3卷积，stride=2，输出32通道（下采样至1/2）
+    [ -1, 1, Conv, [ 64, 3, 2 ] ],  # 1: 同上，输出64通道（下采样至1/4）
 
-   # conv down
-   [-1, 1, Conv, [64, 3, 2]],  # 1-P2/4
+    # ELAN特征提取块
+    [ -1, 1, RepNCSPELAN4, [ 128, 64, 32, 1 ] ], # 2: 输入64，输出128通道（CSP+ELAN结构）
 
-   # elan-1 block
-   [-1, 1, RepNCSPELAN4, [128, 64, 32, 1]],  # 2
-
-   # avg-conv down
-   [-1, 1, ADown, [128]],  # 3-P3/8
-
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [256, 128, 64, 1]],  # 4
-
-   # avg-conv down
-   [-1, 1, ADown, [256]],  # 5-P4/16
-
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [256, 256, 128, 1]],  # 6
-
-   # avg-conv down
-   [-1, 1, ADown, [256]],  # 7-P5/32
-
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [256, 256, 128, 1]],  # 8
+    # 下采样与特征提取
+    [ -1, 1, ADown, [ 128 ] ],       # 3: 平均池化下采样（输出128通道，1/8分辨率）
+    [ -1, 1, RepNCSPELAN4, [ 256, 128, 64, 1 ] ], # 4: 输出256通道
+    [ -1, 1, ADown, [ 256 ] ],       # 5: 下采样至1/16分辨率
+    [ -1, 1, RepNCSPELAN4, [ 256, 256, 128, 1 ] ], # 6: 输出256通道
+    [ -1, 1, ADown, [ 256 ] ],       # 7: 下采样至1/32分辨率
+    [ -1, 1, RepNCSPELAN4, [ 256, 256, 128, 1 ] ], # 8: 输出256通道（最终层）
   ]
-
 # gelan head
 head:
   [
-   # elan-spp block
-   [-1, 1, SPPELAN, [256, 128]],  # 9
+    # SPP增强感受野
+    [ -1, 1, SPPELAN, [ 256, 128 ] ],  # 9: 空间金字塔池化（SPP）+ ELAN
 
-   # up-concat merge
-   [-1, 1, nn.Upsample, [None, 2, 'nearest']],
-   [[-1, 6], 1, Concat, [1]],  # cat backbone P4
+    # 上采样与特征融合（P5->P4）
+    [ -1, 1, nn.Upsample, [ None, 2, 'nearest' ] ], # 10: 上采样至1/16
+    [ [ -1, 6 ], 1, Concat, [ 1 ] ],      # 11: 拼接Backbone的P4层（第6层）
+    [ -1, 1, RepNCSPELAN4, [ 256, 256, 128, 1 ] ], # 12: 融合后处理
 
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [256, 256, 128, 1]],  # 12
+    # 上采样与特征融合（P4->P3）
+    [ -1, 1, nn.Upsample, [ None, 2, 'nearest' ] ], # 13: 上采样至1/8
+    [ [ -1, 4 ], 1, Concat, [ 1 ] ],      # 14: 拼接Backbone的P3层（第4层）
+    [ -1, 1, RepNCSPELAN4, [ 128, 128, 64, 1 ] ], # 15: 输出P3检测头（小目标）
 
-   # up-concat merge
-   [-1, 1, nn.Upsample, [None, 2, 'nearest']],
-   [[-1, 4], 1, Concat, [1]],  # cat backbone P3
+    # 下采样与特征融合（P3->P4）
+    [ -1, 1, ADown, [ 128 ] ],          # 16: 下采样至1/16
+    [ [ -1, 12 ], 1, Concat, [ 1 ] ],     # 17: 拼接第12层
+    [ -1, 1, RepNCSPELAN4, [ 256, 256, 128, 1 ] ], # 18: 输出P4检测头（中目标）
 
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [128, 128, 64, 1]],  # 15 (P3/8-small)
+    # 下采样与特征融合（P4->P5）
+    [ -1, 1, ADown, [ 256 ] ],          # 19: 下采样至1/32
+    [ [ -1, 9 ], 1, Concat, [ 1 ] ],      # 20: 拼接第9层
+    [ -1, 1, RepNCSPELAN4, [ 256, 256, 128, 1 ] ], # 21: 输出P5检测头（大目标）
 
-   # avg-conv-down merge
-   [-1, 1, ADown, [128]],
-   [[-1, 12], 1, Concat, [1]],  # cat head P4
-
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [256, 256, 128, 1]],  # 18 (P4/16-medium)
-
-   # avg-conv-down merge
-   [-1, 1, ADown, [256]],
-   [[-1, 9], 1, Concat, [1]],  # cat head P5
-
-   # elan-2 block
-   [-1, 1, RepNCSPELAN4, [256, 256, 128, 1]],  # 21 (P5/32-large)
-
-   # detect
-   [[15, 18, 21], 1, DDetect, [nc]],  # DDetect(P3, P4, P5)
+    # 多尺度检测
+    [ [ 15, 18, 21 ], 1, DDetect, [ nc ] ], # 22: 检测层（P3, P4, P5）
   ]

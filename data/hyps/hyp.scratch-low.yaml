@@ -1,30 +1,43 @@
-lr0: 0.01  # initial learning rate (SGD=1E-2, Adam=1E-3)
-lrf: 0.01  # final OneCycleLR learning rate (lr0 * lrf)
-momentum: 0.937  # SGD momentum/Adam beta1
-weight_decay: 0.0005  # optimizer weight decay 5e-4
-warmup_epochs: 3.0  # warmup epochs (fractions ok)
-warmup_momentum: 0.8  # warmup initial momentum
-warmup_bias_lr: 0.1  # warmup initial bias lr
-box: 7.5  # box loss gain
-cls: 0.5  # cls loss gain
-cls_pw: 1.0  # cls BCELoss positive_weight
-obj: 0.7  # obj loss gain (scale with pixels)
-obj_pw: 1.0  # obj BCELoss positive_weight
-dfl: 1.5  # dfl loss gain
-iou_t: 0.20  # IoU training threshold
-anchor_t: 5.0  # anchor-multiple threshold
-# anchors: 3  # anchors per output layer (0 to ignore)
-fl_gamma: 0.0  # focal loss gamma (efficientDet default gamma=1.5)
-hsv_h: 0.015  # image HSV-Hue augmentation (fraction)
-hsv_s: 0.7  # image HSV-Saturation augmentation (fraction)
-hsv_v: 0.4  # image HSV-Value augmentation (fraction)
-degrees: 0.0  # image rotation (+/- deg)
-translate: 0.1  # image translation (+/- fraction)
-scale: 0.5  # image scale (+/- gain)
-shear: 0.0  # image shear (+/- deg)
-perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
-flipud: 0.0  # image flip up-down (probability)
-fliplr: 0.5  # image flip left-right (probability)
-mosaic: 1.0  # image mosaic (probability)
-mixup: 0.0  # image mixup (probability)
-copy_paste: 0.0  # segment copy-paste (probability)
+#优化器与学习率
+lr0: 0.01         # 初始学习率（SGD建议1E-2，Adam建议1E-3）
+lrf: 0.01         # 最终学习率 = lr0 * lrf（OneCycleLR调度，从0.01降到0.0001）
+momentum: 0.937   # SGD的动量参数 / Adam的beta1（控制梯度方向惯性）
+weight_decay: 0.0005  # L2正则化权重衰减（防止过拟合，经典值5e-4）
+
+#预热（Warmup）策略
+warmup_epochs: 3.0      # 预热阶段持续3个epoch（初始学习率缓慢增长）
+warmup_momentum: 0.8    # 预热阶段的初始动量（从0.8逐渐增加到0.937）
+warmup_bias_lr: 0.1     # 预热阶段的偏置（bias）参数学习率（从0.1逐渐过渡到lr0）
+
+#损失函数权重
+box: 7.5    # 边界框回归损失权重（GIoU/DIoU/CIoU损失）
+cls: 0.5    # 分类损失权重（BCEWithLogitsLoss）
+cls_pw: 1.0 # 分类损失中正样本的权重（平衡正负样本）
+obj: 0.7    # 目标存在性损失权重（检测到目标的置信度）
+obj_pw: 1.0 # 目标存在性损失的正样本权重
+dfl: 1.5    # Distribution Focal Loss权重（用于边界框分布预测）
+
+#训练阈值
+iou_t: 0.20     # IoU训练阈值（高于此值的Anchor视为正样本）
+anchor_t: 5.0   # Anchor宽高比阈值（宽高比差异超过5倍的Anchor被排除）
+# anchors: 3    # 每个输出层的Anchor数量（注释表示沿用全局参数）
+fl_gamma: 0.0   # Focal Loss的gamma参数（0表示禁用Focal Loss，使用普通BCE）
+
+#图像增强（颜色空间）
+hsv_h: 0.015  # 色调（Hue）增强幅度（随机调整±1.5%）
+hsv_s: 0.7    # 饱和度（Saturation）增强幅度（随机调整±70%）
+hsv_v: 0.4    # 明度（Value）增强幅度（随机调整±40%）
+
+#图像增强（几何变换）
+degrees: 0.0      # 随机旋转角度范围（±0度，禁用旋转）
+translate: 0.1    # 随机平移幅度（±10%图像尺寸）
+scale: 0.5        # 随机缩放幅度（±50%图像尺寸）
+shear: 0.0        # 随机剪切幅度（±0度，禁用剪切）
+perspective: 0.0  # 透视变换幅度（0-0.001，禁用透视变换）
+
+#图像增强（翻转与组合）
+flipud: 0.0    # 上下翻转概率（0%概率禁用）
+fliplr: 0.5    # 左右翻转概率（50%概率启用）
+mosaic: 1.0    # Mosaic数据增强概率（100%启用，4图拼接）
+mixup: 0.0     # Mixup增强概率（0%禁用，混合两幅图像）
+copy_paste: 0.0  # 复制粘贴增强概率（0%禁用，用于实例分割）

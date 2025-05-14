@@ -1,0 +1,11 @@
+path: ./dataset/PSD  # dataset root dir
+train: images/train
+val: images/val
+# Classes
+names:
+  0: 01_key_point
+  1: 02_key_point
+  2: 03_key_point
+  3: 04_key_point
+  4: 05_key_point
+  5: 06_key_point

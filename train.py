@@ -1,35 +1,37 @@
-import argparse
-import math
-import os
-import random
-import sys
-import time
-from copy import deepcopy
-from datetime import datetime
-from pathlib import Path
+import argparse  # 命令行参数解析
+import math  # 数学运算
+import os  # 系统路径操作
+import random  # 随机数生成
+import sys  # 系统相关功能
+import time  # 时间处理
+from copy import deepcopy  # 深拷贝对象
+from datetime import datetime  # 时间戳记录
+from pathlib import Path  # 路径对象处理
 
-import numpy as np
-import torch
-import torch.distributed as dist
-import torch.nn as nn
-import yaml
-from torch.optim import lr_scheduler
-from tqdm import tqdm
+import numpy as np  # 数值计算
+import torch  # PyTorch深度学习框架
+import torch.distributed as dist  # 分布式训练
+import torch.nn as nn  # 神经网络模块
+import yaml  # YAML配置文件解析
+from torch.optim import lr_scheduler  # 学习率调度器
+from tqdm import tqdm  # 进度条显示
 
+# 自定义模块路径设置
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # root directory
+ROOT = FILE.parents[0]  # 根目录
 if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))  # add ROOT to PATH
-ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+    sys.path.append(str(ROOT))  # 将根目录加入系统路径
+ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # 转换为相对路径
 
-import val as validate  # for end-of-epoch mAP
-from models.experimental import attempt_load
-from models.yolo import Model
-from utils.autoanchor import check_anchors
-from utils.autobatch import check_train_batch_size
-from utils.callbacks import Callbacks
-from utils.dataloaders import create_dataloader
-from utils.downloads import attempt_download, is_url
+# 导入自定义模块
+import val as validate  # 验证模块
+from models.experimental import attempt_load  # 模型加载
+from models.yolo import Model  # YOLO模型定义
+from utils.autoanchor import check_anchors  # 锚框检查
+from utils.autobatch import check_train_batch_size  # 自动批次大小
+from utils.callbacks import Callbacks  # 训练回调函数
+from utils.dataloaders import create_dataloader  # 数据加载器
+from utils.downloads import attempt_download, is_url  # 模型下载
 from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_amp, check_dataset, check_file, check_img_size,
                            check_suffix, check_yaml, colorstr, get_latest_run, increment_path, init_seeds,
                            intersect_dicts, labels_to_class_weights, labels_to_image_weights, methods,
@@ -42,16 +44,16 @@ from utils.plots import plot_evolve
 from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP,
                                smart_optimizer, smart_resume, torch_distributed_zero_first)
 
-LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
-RANK = int(os.getenv('RANK', -1))
-WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-GIT_INFO = None
+LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # 本地进程编号
+RANK = int(os.getenv('RANK', -1))  # 全局进程编号
+WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))  # 总进程数
+GIT_INFO = None  # Git版本信息（未使用）
 
 
 def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
-        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
+            opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
     callbacks.run('on_pretrain_routine_start')
 
     # Directories
@@ -63,7 +65,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     # Hyperparameters
     if isinstance(hyp, str):
         with open(hyp, errors='ignore') as f:
-            hyp = yaml.safe_load(f)  # load hyps dict
+            hyp = yaml.safe_load(f)  # 从YAML文件加载超参数
     LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     hyp['anchor_t'] = 5.0
     opt.hyp = hyp.copy()  # for saving hyps to checkpoints
@@ -73,7 +75,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         yaml_save(save_dir / 'hyp.yaml', hyp)
         yaml_save(save_dir / 'opt.yaml', vars(opt))
 
-    # Loggers
+    # Loggers todo
     data_dict = None
     if RANK in {-1, 0}:
         loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)  # loggers instance
@@ -87,7 +89,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         if resume:  # If resuming runs from remote artifact
             weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
 
-    # Config
+    # Config todo
     plots = not evolve and not opt.noplots  # create plots
     cuda = device.type != 'cpu'
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
@@ -96,7 +98,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     train_path, val_path = data_dict['train'], data_dict['val']
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-    #is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
+    # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
     # is_coco = isinstance(val_path, str) and val_path.endswith('val2017.txt')  # COCO dataset
     is_coco = True
 
@@ -224,9 +226,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
     # Model attributes
     nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
-    #hyp['box'] *= 3 / nl  # scale to layers
-    #hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
-    #hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
+    # hyp['box'] *= 3 / nl  # scale to layers
+    # hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
+    # hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
     hyp['label_smoothing'] = opt.label_smoothing
     model.nc = nc  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
@@ -452,7 +454,8 @@ def parse_opt(known=False):
     parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
-    parser.add_argument('--optimizer', type=str, choices=['SGD', 'Adam', 'AdamW', 'LION'], default='SGD', help='optimizer')
+    parser.add_argument('--optimizer', type=str, choices=['SGD', 'Adam', 'AdamW', 'LION'], default='SGD',
+                        help='optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--project', default=ROOT / 'runs/train', help='save to project/name')
