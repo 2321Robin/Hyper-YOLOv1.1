@@ -149,25 +149,45 @@ def run(
             # --- 处理第二个模型的结果 ---
             for i, det in enumerate(pred2):
                 if len(det):
-                    det[:, :4] = scale_boxes(im2.shape[2:], det[:, :4], im0.shape).round()  # 注意使用 im2 的尺寸
-                    # 统计类别（可选合并或独立统计）
+                    det[:, :4] = scale_boxes(im2.shape[2:], det[:, :4], im0.shape).round()
+                    # 统计类别（可选）
                     for c in det[:, 5].unique():
                         n = (det[:, 5] == c).sum()
                         s += f"{n} {names2[int(c)]}{'s' * (n > 1)}, "
-                    # 绘制和保存
+                    # 处理每个检测结果
                     for *xyxy, conf, cls in reversed(det):
-                        if save_txt:  # 可选是否保存到同一个文件
+                        if save_txt:
+                            # 保存原始框的坐标（如需保存点坐标，需修改此处）
                             xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
                             line = (cls, *xywh, conf) if save_conf else (cls, *xywh)
-                            with open(f'{txt_path}_model2.txt', 'a') as f:  # 使用不同文件名
+                            with open(f'{txt_path}_model2.txt', 'a') as f:
                                 f.write(('%g ' * len(line)).rstrip() % line + '\n')
                         if save_img or save_crop or view_img:
                             c = int(cls)
                             label = None if hide_labels else (names2[c] if hide_conf else f'{names2[c]} {conf:.2f}')
-                            annotator.box_label(xyxy, label, color=colors(c + 10, True))  # 颜色偏移
+
+                            # ====== 关键修改：绘制中心点 ======
+                            x1, y1, x2, y2 = map(int, xyxy)
+                            x_center = (x1 + x2) // 2
+                            y_center = (y1 + y2) // 2
+
+                            # 绘制红色实心圆点
+                            cv2.circle(im0, (x_center, y_center), 5, (0, 0, 255), -1)
+
+                            # 绘制标签（在点上方）
+                            if not hide_labels:
+                                label_y = y_center - 10 if y_center - 10 > 10 else y_center + 20
+                                cv2.putText(
+                                    im0,
+                                    label,
+                                    (x_center, label_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 0, 255),  # 红色文字
+                                    2
+                                )
                         if save_crop:
-                            save_one_box(xyxy, im0.copy(), file=save_dir / 'crops_model2' / names2[c] / f'{p.stem}.jpg',
-                                         BGR=True)
+                            pass  # 跳过保存
 
             # --- 统一保存和显示 ---
             im0 = annotator.result()
