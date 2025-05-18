@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import os
+from collections import defaultdict
 
 
 def convert_bbox(size, box):
@@ -16,8 +17,7 @@ def parse_polygon(polygon):
     """解析多边形标注并返回最小外接矩形"""
     coords = {'x': [], 'y': []}
 
-    # 提取所有顶点坐标（支持4-8个顶点）
-    for i in range(1, 9):  # 尝试读取最多8个顶点
+    for i in range(1, 9):
         x_elem = polygon.find(f'x{i}')
         y_elem = polygon.find(f'y{i}')
         if x_elem is None or y_elem is None:
@@ -29,18 +29,36 @@ def parse_polygon(polygon):
         except (ValueError, TypeError):
             return None
 
-    # 至少需要3个有效顶点才能形成有效区域
     if len(coords['x']) < 3 or len(coords['y']) < 3:
         return None
 
-    # 计算最小外接矩形
     xmin, xmax = min(coords['x']), max(coords['x'])
     ymin, ymax = min(coords['y']), max(coords['y'])
     return (xmin, xmax, ymin, ymax)
 
 
-def xml_to_yolo(xml_path, output_dir, classes, create_empty=False):
-    """核心转换函数"""
+def parse_bndbox(bndbox):
+    """解析标准边界框格式"""
+    try:
+        xmin = float(bndbox.find('xmin').text)
+        xmax = float(bndbox.find('xmax').text)
+        ymin = float(bndbox.find('ymin').text)
+        ymax = float(bndbox.find('ymax').text)
+
+        # 确保坐标有效性
+        if xmin > xmax:
+            xmin, xmax = xmax, xmin
+        if ymin > ymax:
+            ymin, ymax = ymax, ymin
+
+        return (xmin, xmax, ymin, ymax)
+    except Exception as e:
+        print(f"[ERROR] 解析边界框失败: {str(e)}")
+        return None
+
+
+def xml_to_yolo(xml_path, output_dir, classes, create_empty=False, existing_classes=None):
+    """核心转换函数（添加了类别统计功能）"""
     try:
         tree = ET.parse(xml_path)
     except ET.ParseError as e:
@@ -48,11 +66,8 @@ def xml_to_yolo(xml_path, output_dir, classes, create_empty=False):
         return False
 
     root = tree.getroot()
-
-    print(f"\nProcessing: {os.path.basename(xml_path)}")
-
-    # 验证图像尺寸
     size_info = root.find('size')
+
     if not size_info:
         print(f"[WARNING] {xml_path} 缺少尺寸信息")
         return False
@@ -69,41 +84,49 @@ def xml_to_yolo(xml_path, output_dir, classes, create_empty=False):
 
     txt_lines = []
 
-    # 遍历所有目标对象
     for obj_idx, obj in enumerate(root.findall('object'), 1):
-        # 类别验证
         name_elem = obj.find('name')
-        if name_elem == 'feright car':
-            name_elem = 'feright_car'
 
-        # 情况1：完全缺失name标签
+        # 处理没有name标签的情况
         if name_elem is None:
-            print(f"[WARNING] 对象#{obj_idx} ❌ 缺失<name>标签 | 完整标签结构：")
-            print(ET.tostring(obj, encoding='unicode').strip())
+            print(f"[WARNING] 对象#{obj_idx} ❌ 缺失<name>标签")
             continue
 
-        # 情况2：name标签内容为空
+        # 获取原始名称并处理特殊情况
         raw_name = name_elem.text or ""
         class_name = raw_name.strip()
+
+        # 特定名称修正
+        if class_name == 'feright car' or class_name == 'feright_car':
+            class_name = 'freight_car'
+
+        # 统计所有遇到的类别（无论是否有效）
+        if existing_classes is not None:
+            existing_classes[class_name] += 1
+
+        # 有效性检查
         if not class_name:
-            print(f"[WARNING] 对象#{obj_idx} ❌ 空<name>内容 | 原始内容：{repr(raw_name)}")
-            print("上下文标签结构：")
-            print(ET.tostring(obj, encoding='unicode').strip())
+            print(f"[WARNING] 对象#{obj_idx} ❌ 空<name>内容")
             continue
 
-        # 情况3：类别未在列表注册
         if class_name not in classes:
             print(f"[WARNING] 对象#{obj_idx} ❌ 未注册类别 '{class_name}'")
-            print("支持类别列表：", classes)
             continue
 
         # 多边形解析
         polygon = obj.find('polygon')
-        if not polygon:
-            print(f"[WARNING] 对象#{obj_idx} 缺少多边形标注")
+        bndbox = obj.find('bndbox')
+
+        if not polygon and not bndbox:
+            print(f"[WARNING] 文件 {os.path.basename(xml_path)} 对象#{obj_idx} 缺少标注（无polygon/bndbox）")
             continue
 
-        bbox = parse_polygon(polygon)
+            # 优先处理多边形标注
+        if polygon:
+            bbox = parse_polygon(polygon)
+        elif bndbox:
+            bbox = parse_bndbox(bndbox)
+
         if not bbox:
             print(f"[WARNING] 对象#{obj_idx} 无效多边形坐标")
             continue
@@ -141,43 +164,39 @@ def xml_to_yolo(xml_path, output_dir, classes, create_empty=False):
 
 
 def batch_convert(xml_dir, output_dir, classes, create_empty=False):
-    """批量转换入口函数"""
+    """批量转换入口函数（添加统计输出功能）"""
     os.makedirs(output_dir, exist_ok=True)
     total_files = 0
     success_files = 0
+
+    # 初始化类别统计字典
+    existing_classes = defaultdict(int)
 
     for xml_file in os.listdir(xml_dir):
         if not xml_file.endswith('.xml'):
             continue
 
         xml_path = os.path.join(xml_dir, xml_file)
-        if xml_to_yolo(xml_path, output_dir, classes, create_empty):
+        if xml_to_yolo(xml_path, output_dir, classes, create_empty, existing_classes):
             success_files += 1
         total_files += 1
 
+    # 打印统计结果
+    print("\n实际存在的类别统计:")
+    print("====================")
+    print("类别名称\t出现次数")
+    for cls, count in sorted(existing_classes.items(), key=lambda x: x[1], reverse=True):
+        print(f"{cls}\t{count}")
+
     print(f"\n转换完成: 成功 {success_files}/{total_files} 个文件")
-    if success_files < total_files:
-        print("提示：请检查警告信息定位问题文件")
 
 
 # 示例调用
 if __name__ == "__main__":
     # ================= 配置区 =================
-    CLASSES = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
-               'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
-               'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
-               'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella',
-               'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard',
-               'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard',
-               'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork',
-               'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
-               'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
-               'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv',
-               'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
-               'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
-               'scissors', 'teddy bear', 'hair drier', 'toothbrush', 'feright_car', 'van']  # 必须与XML中name标签完全一致
-    XML_DIR = 'dataset/PSD/label/val'
-    OUTPUT_DIR = 'dataset/PSD/labels/val'
+    CLASSES = ['car', 'truck', 'bus', 'freight_car', 'van']  # 必须与XML中name标签完全一致
+    XML_DIR = 'dataset/1/labels/train'
+    OUTPUT_DIR = 'dataset/1/label/train'
     CREATE_EMPTY = True  # 是否生成空txt文件（无标注时）
     # ==========================================
 
