@@ -6,6 +6,7 @@ import sys  # 系统相关参数和函数
 from pathlib import Path  # 处理文件路径
 
 import torch  # PyTorch深度学习框架
+import numpy as np
 
 # 获取当前文件的绝对路径并解析项目根目录
 FILE = Path(__file__).resolve()  # 解析当前文件的绝对路径
@@ -22,6 +23,46 @@ from utils.general import (LOGGER, Profile, check_file, check_img_size, check_im
                            xyxy2xywh)  # 通用工具函数
 from utils.plots import Annotator, colors, save_one_box  # 绘图工具
 from utils.torch_utils import select_device, smart_inference_mode  # PyTorch工具函数
+
+
+# === 修改后的直线端点计算 ===
+def calculate_line_endpoints(m, c, img_h, img_w):
+    """
+    计算直线在图像边界内的两个端点
+    """
+    # 定义图像边界：x=0, x=img_w-1, y=0, y=img_h-1
+    intersections = []
+
+    # 计算直线与四条边界的交点
+    # 1. 左边界 (x=0)
+    y_left = int(m * 0 + c)
+    if 0 <= y_left < img_h:
+        intersections.append((0, y_left))
+
+    # 2. 右边界 (x=img_w-1)
+    y_right = int(m * (img_w - 1) + c)
+    if 0 <= y_right < img_h:
+        intersections.append((img_w - 1, y_right))
+
+    # 3. 上边界 (y=0)
+    if m != 0:  # 避免除以零
+        x_top = int((0 - c) / m)
+        if 0 <= x_top < img_w:
+            intersections.append((x_top, 0))
+
+    # 4. 下边界 (y=img_h-1)
+    if m != 0:
+        x_bottom = int((img_h - 1 - c) / m)
+        if 0 <= x_bottom < img_w:
+            intersections.append((x_bottom, img_h - 1))
+
+    # 至少需要两个交点才能绘制直线
+    if len(intersections) >= 2:
+        # 选择距离最远的两个点（确保直线贯穿图像）
+        sorted_points = sorted(intersections, key=lambda p: p[0])
+        return (sorted_points[0][0], sorted_points[0][1]), (sorted_points[-1][0], sorted_points[-1][1])
+    else:
+        return None
 
 
 # 使用智能推理模式装饰器（自动选择最优推理设置）
@@ -62,6 +103,10 @@ def run(
     # 创建保存结果的目录
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # 自动递增路径防止覆盖
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # 创建标签目录（如果需要）
+
+    # 创建调试目录（添加到 run 函数开头）
+    debug_dir = save_dir / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
 
     # 加载模型
     device = select_device(device)  # 选择设备（GPU/CPU）
@@ -150,6 +195,7 @@ def run(
             for i, det in enumerate(pred2):
                 if len(det):
                     det[:, :4] = scale_boxes(im2.shape[2:], det[:, :4], im0.shape).round()
+                    points = []  # 存储所有中心点坐标
                     # 统计类别（可选）
                     for c in det[:, 5].unique():
                         n = (det[:, 5] == c).sum()
@@ -170,6 +216,7 @@ def run(
                             x1, y1, x2, y2 = map(int, xyxy)
                             x_center = (x1 + x2) // 2
                             y_center = (y1 + y2) // 2
+                            points.append((x_center, y_center))  # 添加到列表
 
                             # 绘制红色实心圆点
                             cv2.circle(im0, (x_center, y_center), 5, (0, 0, 255), -1)
@@ -188,6 +235,65 @@ def run(
                                 )
                         if save_crop:
                             pass  # 跳过保存
+                            # === 新增：拟合直线并绘制 ===
+                            # === 拟合并绘制直线 ===
+
+                        debug_img_points = im0.copy()
+                        for (x, y) in points:
+                            cv2.circle(debug_img_points, (x, y), 5, (255, 0, 0), -1)
+                        cv2.imwrite(str(debug_dir / f"{p.stem}_raw_points.jpg"), debug_img_points)
+
+                        if len(points) >= 2:
+                            x = np.array([p[0] for p in points])
+                            y = np.array([p[1] for p in points])
+
+                            # 初次拟合
+                            try:
+                                A = np.vstack([x, np.ones(len(x))]).T
+                                m, c = np.linalg.lstsq(A, y, rcond=None)[0]
+                            except np.linalg.LinAlgError:
+                                continue  # 初次拟合失败则跳过
+
+                            # 动态阈值剔除离群点
+                            residuals = np.abs(m * x - y + c) / np.sqrt(m ** 2 + 1)
+                            median_residual = np.median(residuals)
+                            std_residual = np.std(residuals)
+                            threshold = median_residual + 3 * std_residual
+                            mask = residuals < threshold
+                            x_filtered = x[mask]
+                            y_filtered = y[mask]
+
+                            # === 可视化筛选后的点 + 初次拟合直线 ===
+                            debug_img_filtered = im0.copy()
+                            for x, y in zip(x_filtered, y_filtered):
+                                cv2.circle(debug_img_filtered, (int(x), int(y)), 5, (0, 255, 0), -1)
+                            # 计算初次拟合直线的端点
+                            x1_line_init = 0
+                            y1_line_init = int(m * x1_line_init + c)
+                            x2_line_init = im0.shape[1]
+                            y2_line_init = int(m * x2_line_init + c)
+                            cv2.line(debug_img_filtered, (x1_line_init, y1_line_init), (x2_line_init, y2_line_init),
+                                     (0, 0, 255), 2)
+                            cv2.imwrite(str(debug_dir / f"{p.stem}_filtered_points.jpg"), debug_img_filtered)
+
+                            # 重新拟合（仅在筛选后点数足够时执行）
+                            if len(x_filtered) >= 2:
+                                try:
+                                    A_filtered = np.vstack([x_filtered, np.ones(len(x_filtered))]).T
+                                    m_final, c_final = np.linalg.lstsq(A_filtered, y_filtered, rcond=None)[0]
+                                except np.linalg.LinAlgError:
+                                    continue  # 重新拟合失败则跳过
+
+                                # === 修改后的代码 ===
+                                # --- 所有使用 m_final/c_final 的代码必须在此处 ---
+                                # 计算直线端点
+                                h, w = im0.shape[:2]
+                                endpoints = calculate_line_endpoints(m_final, c_final, h, w)  # 调用稳健的端点计算函数
+
+                                if endpoints:  # 确保存在有效端点
+                                    (x1_line, y1_line), (x2_line, y2_line) = endpoints
+                                    # 绘制直线（必须在此条件块内）
+                                    cv2.line(im0, (x1_line, y1_line), (x2_line, y2_line), (0, 255, 0), 2)
 
             # --- 统一保存和显示 ---
             im0 = annotator.result()
