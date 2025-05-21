@@ -65,6 +65,42 @@ def calculate_line_endpoints(m, c, img_h, img_w):
         return None
 
 
+def draw_dashed_line(img, pt1, pt2, color, thickness=1, dash_length=10):
+    """
+    绘制虚线
+    - img: 图像矩阵
+    - pt1: 起点 (x1, y1)
+    - pt2: 终点 (x2, y2)
+    - color: 颜色 (BGR)
+    - thickness: 线宽
+    - dash_length: 虚线段长度（像素）
+    """
+    dist = np.sqrt((pt1[0] - pt2[0]) ** 2 + (pt1[1] - pt2[1]) ** 2)
+    dx = (pt2[0] - pt1[0]) / dist
+    dy = (pt2[1] - pt1[1]) / dist
+
+    for i in range(0, int(dist - dash_length), int(dash_length * 2)):
+        start = (int(pt1[0] + dx * i), int(pt1[1] + dy * i))
+        end = (int(pt1[0] + dx * (i + dash_length)), int(pt1[1] + dy * (i + dash_length)))
+        cv2.line(img, start, end, color, thickness)
+
+def calculate_perpendicular_endpoints(x_center, y_center, m_main, img_h, img_w):
+    """
+    计算垂线在图像边界内的端点
+    - m_main: 主直线的斜率
+    - x_center, y_center: 垂线经过的点
+    返回：两个端点坐标的元组 ((x1, y1), (x2, y2)) 或 None
+    """
+    if m_main == 0:  # 主直线水平，垂线垂直
+        return ((x_center, 0), (x_center, img_h-1))
+    elif abs(m_main) > 1e6:  # 主直线垂直，垂线水平
+        return ((0, y_center), (img_w-1, y_center))
+    else:
+        # 垂线斜率为 -1/m_main
+        m_perpendicular = -1 / m_main
+        c_perpendicular = y_center - m_perpendicular * x_center
+        return calculate_line_endpoints(m_perpendicular, c_perpendicular, img_h, img_w)
+
 # 使用智能推理模式装饰器（自动选择最优推理设置）
 @smart_inference_mode()
 def run(
@@ -294,6 +330,24 @@ def run(
                                     (x1_line, y1_line), (x2_line, y2_line) = endpoints
                                     # 绘制直线（必须在此条件块内）
                                     cv2.line(im0, (x1_line, y1_line), (x2_line, y2_line), (0, 255, 0), 2)
+
+                                    # === 沿直线绘制垂线（延伸至边界）===
+                                    max_distance = 20  # 点与直线的最大允许距离（像素）
+                                    h, w = im0.shape[:2]
+
+                                    for (x_center, y_center) in points:
+                                        # 计算点到主直线的距离
+                                        distance = abs(m_final * x_center - y_center + c_final) / np.sqrt(
+                                            m_final ** 2 + 1)
+                                        if distance <= max_distance:
+                                            # 计算垂线端点
+                                            endpoints_perp = calculate_perpendicular_endpoints(x_center, y_center,
+                                                                                               m_final, h, w)
+                                            if endpoints_perp:
+                                                (px1, py1), (px2, py2) = endpoints_perp
+                                                # 绘制虚线（黄色）
+                                                draw_dashed_line(im0, (px1, py1), (px2, py2), (0, 255, 255),
+                                                                 thickness=1, dash_length=5)
 
             # --- 统一保存和显示 ---
             im0 = annotator.result()
